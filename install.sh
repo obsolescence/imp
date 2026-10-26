@@ -458,12 +458,29 @@ pi_model() {
     printf '%s' "${m:-not a Raspberry Pi (or no device-tree model)}"
 }
 
-# Dependency sets. The core list is lifted from the PiDP-10 installer, minus
-# everything the PDP-10 needed only for its video windows; the IMP's display is
-# the panel itself, so SDL and GTK are optional here.
-# libcap2-bin is what provides setcap/getcap, which the privilege step needs.
-PKGS_BUILD="build-essential git autoconf pkg-config libcap2-bin"
-PKGS_SIM="libpcap-dev libreadline-dev libedit-dev libvdeplug-dev"
+# Dependency sets.
+#
+# Provenance matters here, because the PiDP-10 list is heavier than this panel
+# needs. Its installer pulls in autoconf, pkg-config, SDL, GTK and the GL dev
+# packages — but those belong to everything *around* the PDP-10 emulator: Lars
+# Brinkhoff's ITS project (autotools, GL) and the Tilix/desktop tooling. The
+# emulator itself is a plain SIMH fork built by a plain makefile: there is no
+# configure.ac and no autogen.sh anywhere in src/pdp10. So autotools are not
+# needed to build a SIMH simulator, and they are not needed here.
+#
+# What is actually used by the build we will have:
+#   build-essential   gcc + make, the SIMH build system
+#   git               to fetch the simulator source
+#   libcap2-bin       setcap/getcap, for the real-time privilege step
+#   libpcap-dev       SIMH networking (raw sockets / pcap)
+#   libedit-dev       line editing in the simulator console — the SIMH makefile
+#                     auto-detects editline/readline.h and links -ledit
+#   libvdeplug-dev    virtual ethernet, for linking simulated IMPs together
+#
+# SDL2 and GTK are optional and off by default: the IMP's display is the panel,
+# not a window.
+PKGS_BUILD="build-essential git libcap2-bin"
+PKGS_SIM="libpcap-dev libedit-dev libvdeplug-dev"
 PKGS_GUI="libsdl2-dev libsdl2-image-dev libsdl2-net-dev libsdl2-ttf-dev libgtk-3-dev"
 
 pkg_missing() {  # $@ = package names; prints the missing ones
