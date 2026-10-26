@@ -309,10 +309,64 @@ static void coverage(void)
     }
 }
 
+/* ---- switch-only mode: read the matrix, drive no LEDs -------------------- */
+static void print_switches(const panel_t *p)
+{
+    uint16_t s0 = p->sw[0], s1 = p->sw[1], s2 = p->sw[2];
+    unsigned rot = (unsigned)((s1 >> SW1_ROT) & 0xF);
+    static const char *rot_name[6] = { "OP", "X", "B", "A", "P/Y", "M" };
+    char sr[17];
+    int i;
+
+    for (i = 0; i < 16; i++)
+        sr[i] = ((s0 >> (15 - i)) & 1u) ? '1' : '0';
+    sr[16] = '\0';
+
+    printf("SR0-15  %s   %04X\n", sr, s0);
+    printf("        POWER %u  PFI %u  SENSE %u %u %u %u  ROT %u %s  MCLR %u  S/F %u  P+1 %u  %s  START %u\n",
+           (s1 >> SW1_POWER) & 1u, (s1 >> SW1_PFI) & 1u,
+           (s1 >> SW1_S1) & 1u, (s1 >> SW1_S2) & 1u,
+           (s1 >> SW1_S3) & 1u, (s1 >> SW1_S4) & 1u,
+           rot, rot < 6 ? rot_name[rot] : "?",
+           (s1 >> SW1_MCLR) & 1u, (s1 >> SW1_SF) & 1u, (s1 >> SW1_PP1) & 1u,
+           ((s1 >> SW1_MA) & 1u) ? "MA" : (((s1 >> SW1_RUN) & 1u) ? "RUN" : "SI"),
+           (s1 >> SW1_START) & 1u);
+    printf("        HALTINH %u  WDT %u  AUTO %u  MEMPRT %u  RESET %u\n",
+           (s2 >> SW2_HALTINH) & 1u, (s2 >> SW2_WDT) & 1u,
+           (s2 >> SW2_AUTO) & 1u, (s2 >> SW2_MEMPRT) & 1u,
+           (s2 >> SW2_RESET) & 1u);
+}
+
+static int switches_mode(void)
+{
+    panel_t p;
+    uint16_t prev[3] = { 0xFFFF, 0xFFFF, 0xFFFF };
+
+    if (panel_start(&p, PANEL_HW | PANEL_LEDS_OFF) != 0) {
+        fprintf(stderr, "panel_start failed: %s\n", strerror(errno));
+        return 1;
+    }
+    printf("switch read only — no LED is driven. Move switches; Ctrl-C to stop.\n");
+    printf("real-time priority: %s\n\n", p.rt_ok ? "granted" : "NOT granted (no cap_sys_nice)");
+    while (!quit_flag) {
+        if (p.sw[0] != prev[0] || p.sw[1] != prev[1] || p.sw[2] != prev[2]) {
+            print_switches(&p);
+            printf("\n");
+            prev[0] = p.sw[0];
+            prev[1] = p.sw[1];
+            prev[2] = p.sw[2];
+        }
+        usleep(20000);
+    }
+    panel_stop(&p);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     panel_t p;
     int use_hw = 1, walk = 0, mode = 0, paused = 0, solid = 0, static_mode = 0;
+    int switches = 0, static_row = 0;
     long headless = -1;
     uint32_t t0, t1, prev[3] = { 0, 0, 0 };
     int i, have_prev = 0;
@@ -327,6 +381,11 @@ int main(int argc, char **argv)
             solid = 1;
         } else if (!strcmp(argv[i], "--static")) {
             static_mode = 1;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '2'
+                && argv[i + 1][1] == '\0')
+                static_row = argv[++i][0] - '0';
+        } else if (!strcmp(argv[i], "--switches")) {
+            switches = 1;
         } else if (!strcmp(argv[i], "--headless") && i + 1 < argc) {
             headless = strtol(argv[++i], NULL, 10);
         } else if (!strcmp(argv[i], "--help")) {
@@ -334,7 +393,8 @@ int main(int argc, char **argv)
                    "  --no-gpio    run the mux thread without touching GPIO\n"
                    "  --ascii      ASCII glyphs instead of UTF-8 lamps\n"
                    "  --solid      light every lamp continuously (meter/bring-up check)\n"
-                   "  --static     no multiplexing at all: hold all lamps on (measure this)\n"
+                   "  --static [R] no multiplexing: hold LED row R high so its 16 lamps stay on\n"
+                   "  --switches   read the switches only, drive no LEDs at all\n"
                    "  --headless N run N mux frames with the demo pattern, print timing, exit\n",
                    argv[0]);
             return 0;
@@ -347,13 +407,16 @@ int main(int argc, char **argv)
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
+    if (switches)
+        return switches_mode();
+
     if (static_mode) {
-        if (panel_static_on() != 0) {
+        if (panel_static_on(static_row) != 0) {
             fprintf(stderr, "panel_static_on failed: %s\n", strerror(errno));
             return 1;
         }
-        printf("static: all three rows HIGH, all 16 columns LOW — every lamp "
-               "should be on steadily.\n");
+        printf("static: LED row %d HIGH, all 16 columns LOW, other rows low — "
+               "that row's 16 lamps should be on steadily.\n", static_row);
         printf("measure now. Ctrl-C to release.\n");
         while (!quit_flag)
             sleep(1);
@@ -364,7 +427,7 @@ int main(int argc, char **argv)
 
     if (headless >= 0) {
         coverage();
-        if (panel_start(&p, use_hw) != 0) {
+        if (panel_start(&p, use_hw ? PANEL_HW : 0u) != 0) {
             fprintf(stderr, "panel_start failed: %s\n", strerror(errno));
             return 1;
         }
@@ -406,7 +469,7 @@ int main(int argc, char **argv)
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
-    if (panel_start(&p, use_hw) != 0) {
+    if (panel_start(&p, use_hw ? PANEL_HW : 0u) != 0) {
         fprintf(stderr, "panel_start failed: %s\n", strerror(errno));
         return 1;
     }

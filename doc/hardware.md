@@ -252,31 +252,52 @@ simulator, with no locks: the lamp and switch words are single aligned
 half-word stores, so the panel can never see a torn value. The panel is allowed
 to display state that is a fraction of a millisecond stale.
 
+#### The two rules that govern the matrix
+
+Neither is an optimisation; both prevent readings that look like hardware faults.
+
+1. **At most one LED row is HIGH at any instant.** Two rows high at once means a
+   column that is LOW lights a lamp in each of them, and the display is no
+   longer addressed. Every row is therefore driven LOW before the next one is
+   enabled, never simply handed over.
+2. **While the switches are read: all LED rows LOW, exactly ONE switch row LOW,
+   and every other switch row driven HIGH.** The LED rows must be low or a driven
+   column would fight the row through a closed switch's diode. The unscanned
+   switch rows must be HIGH rather than left as inputs, because an input pin's
+   pull is whatever the pad happens to have — on the Pi 4 the power-on default
+   is pull-down, and a row sitting at ground pulls its column down through a
+   closed switch exactly like a switch in the row being scanned would. That is a
+   phantom reading, and it is indistinguishable from a real one. Driving the
+   row high reverse-biases that switch's diode, so the column stays where the
+   pull-up put it.
+
 ### 5.1 LED phase — for each row r = 0, 1, 2
 
-1. switch rows (GPIO4/5/6) = **INPUT** — settled once per frame
-2. row r input LOW and rows still on LOW: blank
+1. all three LED rows LOW; switch rows tri-stated for this phase (see below)
+2. columns = OUTPUT
 3. drive the 16 column levels from the lamp word for row r
-4. row r input HIGH: unblank
+4. row r HIGH — and it is the only row that is high
 5. dwell
-6. row r input LOW: blank again before the next column load
+6. row r LOW again, before anything else changes
 
-Steps 2-4 are the ghost-free order: data is loaded while dark, the row is
-enabled only once the columns have settled.
+Steps 3-5 are the ghost-free order: data is loaded while dark, the row is
+enabled only once the columns have settled, and it is switched off before the
+data changes for the next row.
 
-The switch rows must be inputs for the whole LED phase. If a row were driven LOW
-while a column sat HIGH with its lamp off and its switch closed, that one switch
-would sink about 2.4 mA from the column (3.3 V across 390 Ω + diode + 820 Ω), and
-sixteen switches on one row would sum to roughly 38 mA into a single GPIO, well
-past the pin rating.
+The switch rows are tri-stated for the whole LED phase rather than driven high:
+a closed switch on a row driven high would sink current out of a column GPIO
+that is driving high for a lamp that is off — about 2.4 mA per switch through
+390 Ω + diode + 820 Ω, and sixteen of them on one row would sum to roughly
+38 mA into a single pin.
 
 ### 5.2 Switch phase
 
-1. all three LED row inputs LOW (lamps dark, so nothing competes for the columns)
+1. all three LED rows LOW (lamps dark, so nothing competes for the columns)
 2. columns = INPUT with pull-ups
-3. for each row r: switch row r = OUTPUT LOW, settle, read the 16 columns, then
-   switch row r back to INPUT
-4. restart the LED phase
+3. all three switch rows = OUTPUT HIGH, so that no unscanned row can sink
+4. for each row r: switch row r LOW, settle, read the 16 columns, switch row r
+   HIGH again; the other two rows stay HIGH throughout
+5. restart the LED phase, which tri-states the switch rows again
 
 ### 5.3 Blanking interval
 

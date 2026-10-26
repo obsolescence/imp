@@ -16,11 +16,25 @@
  * A lamp is lit when its column is driven LOW with its row HIGH. A switch reads
  * closed when its column is LOW with its row driven LOW.
  *
- * Two rules make the shared columns safe, and both are enforced below:
- *   1. the switch rows are inputs for the whole LED phase, so a closed switch
- *      can never sink current out of a column that is driving a lamp;
- *   2. the LED rows are all low for the whole switch phase, so nothing is
- *      fighting the pull-ups the columns rely on.
+ * THE TWO RULES, and why each one is not negotiable:
+ *
+ *   1. At most ONE LED row high. Two rows high means a column that is low
+ *      lights a lamp in each of them, and the display is no longer addressed.
+ *
+ *   2. Switch reading: all LED rows LOW, exactly ONE switch row LOW, the rest
+ *      driven HIGH. The LED rows must be low or a lit column would fight the
+ *      row through a closed switch's diode. The unscanned switch rows must be
+ *      HIGH, not floating: a floating row sits somewhere near ground, and a
+ *      closed switch on it pulls its column down exactly like a switch in the
+ *      row being scanned — a phantom reading. Driving the row high reverse-
+ *      biases that switch's diode, so its column stays up where the pull-up
+ *      put it.
+ *
+ * The switch rows are tri-stated during the LED phase rather than driven high,
+ * for a different reason: a closed switch on a row driven high would sink
+ * current out of a column GPIO driving high for a lamp that is off — about
+ * 2.4 mA per switch, 38 mA across a full row, well past what an output pin
+ * should be asked to source.
  */
 #include <errno.h>
 #include <pthread.h>
@@ -69,18 +83,23 @@ static void cols_write(uint16_t w)
     }
 }
 
-static void panel_init_pins(void)
+static void all_led_rows_off(void)
 {
-    unsigned r, k;
+    unsigned r;
 
-    /* LED row drivers: outputs, all off. */
     for (r = 0; r < 3; r++) {
         gpio_set_dir(led_row[r], DIR_OUTPUT);
         gpio_clear(led_row[r]);
     }
-    /* Switch rows: inputs (tri-stated) until we scan them. */
+}
+
+static void panel_init_pins(void)
+{
+    unsigned r, k;
+
+    all_led_rows_off();
     for (r = 0; r < 3; r++)
-        gpio_set_dir(sw_row[r], DIR_INPUT);
+        gpio_set_dir(sw_row[r], DIR_INPUT);   /* tri-stated until we scan */
     /* Columns: inputs with a pull-up. The board has no pull-ups of its own —
      * the read path relies on the SoC's internal ones, and how to ask for them
      * differs per SoC, which is exactly why this goes through the library. */
@@ -96,44 +115,56 @@ static void *mux_thread(void *arg)
 
     while (!p->stop) {
         uint16_t l[3];
-        int r;
-        unsigned k;
+        unsigned r, k;
 
         l[0] = p->lamps[0];
         l[1] = p->lamps[1];
         l[2] = p->lamps[2];
 
         if (p->hw) {
-            /* --- LED phase -------------------------------------------------- */
+            /* --- rule 1: start from every row low, and never have two high --- */
+            all_led_rows_off();
+            /* Switch rows tri-stated while the columns are driven (see above). */
             for (r = 0; r < 3; r++)
                 gpio_set_dir(sw_row[r], DIR_INPUT);
+
+            /* --- LED phase: one row at a time --------------------------------- */
             for (k = 0; k < 16; k++)
                 gpio_set_dir(col_pin[k], DIR_OUTPUT);
 
-            for (r = 0; r < 3; r++) {
-                cols_write(l[r]);        /* data first ... */
-                gpio_set(led_row[r]);    /* ... then enable the row */
-                nsleep(DWELL_NS);
-                gpio_clear(led_row[r]);  /* blank before the columns change */
-                nsleep(BLANK_NS);
+            if (!p->leds_off) {
+                for (r = 0; r < 3; r++) {
+                    cols_write(l[r]);        /* data first ... */
+                    gpio_set(led_row[r]);    /* ... then exactly this row on */
+                    nsleep(DWELL_NS);
+                    gpio_clear(led_row[r]);  /* ... and off again, every time */
+                    nsleep(BLANK_NS);
+                }
+            } else {
+                nsleep(DWELL_NS);            /* keep the frame cadence */
             }
 
-            /* --- switch phase ----------------------------------------------- */
+            /* --- rule 2: switch phase ---------------------------------------- */
+            all_led_rows_off();              /* nobody lights anything now */
             for (k = 0; k < 16; k++)
                 gpio_set_dir(col_pin[k], DIR_INPUT);
+            for (r = 0; r < 3; r++) {        /* unscanned rows high, not floating */
+                gpio_set_dir(sw_row[r], DIR_OUTPUT);
+                gpio_set(sw_row[r]);
+            }
 
             for (r = 0; r < 3; r++) {
                 uint16_t w = 0;
 
-                gpio_set_dir(sw_row[r], DIR_OUTPUT);
-                gpio_clear(sw_row[r]);
+                gpio_clear(sw_row[r]);       /* exactly one row low */
                 nsleep(SETTLE_NS);
                 for (k = 0; k < 16; k++)
                     if (gpio_get_level(col_pin[k]) == 0)
                         w |= (uint16_t)(1u << k);
                 p->sw[r] = w;
-                gpio_set_dir(sw_row[r], DIR_INPUT);   /* release the row */
+                gpio_set(sw_row[r]);         /* back high before the next row */
             }
+            /* Next frame re-tristates them before driving any column. */
         } else {
             p->sw[0] = p->fake_sw[0];
             p->sw[1] = p->fake_sw[1];
@@ -147,53 +178,52 @@ static void *mux_thread(void *arg)
 
 /* --- static bring-up mode -------------------------------------------------
  *
- * No multiplexing: all three rows driven HIGH and all 16 columns driven LOW, so
- * every lamp is on continuously. This is the state to put a meter on, and the
- * quickest way to ask "can this panel light at all?". About 150 mA from 5 V,
- * well inside the UDN2981A ratings (three channels, ~50 mA each).
+ * No multiplexing: one row HIGH and all 16 columns LOW, so that row's lamps are
+ * on continuously. Only one row is lit, by rule 1. This is the state to put a
+ * meter on, and the quickest way to ask "can this row light at all?".
  */
-int panel_static_on(void)
+int panel_static_on(int row)
 {
     unsigned r, k;
 
+    if (row < 0 || row > 2)
+        return -1;
     if (gpiolib_init() <= 0)
         return -1;
     if (gpiolib_mmap() != 0)
         return -1;
 
     for (r = 0; r < 3; r++)
-        gpio_set_dir(sw_row[r], DIR_INPUT);
+        gpio_set_dir(sw_row[r], DIR_INPUT);   /* nothing drives the switches */
     for (k = 0; k < 16; k++) {
         gpio_set_dir(col_pin[k], DIR_OUTPUT);
         gpio_clear(col_pin[k]);
     }
-    for (r = 0; r < 3; r++) {
-        gpio_set_dir(led_row[r], DIR_OUTPUT);
-        gpio_set(led_row[r]);
-    }
+    all_led_rows_off();
+    gpio_set(led_row[row]);                   /* exactly one row high */
     return 0;
 }
 
 void panel_static_off(void)
 {
-    unsigned r, k;
+    unsigned k;
 
-    for (r = 0; r < 3; r++)
-        gpio_clear(led_row[r]);
+    all_led_rows_off();
     for (k = 0; k < 16; k++)
         gpio_set_dir(col_pin[k], DIR_INPUT);
 }
 
-int panel_start(panel_t *p, int use_hw)
+int panel_start(panel_t *p, unsigned flags)
 {
     pthread_attr_t attr;
     struct sched_param sp;
     int rc;
 
     memset(p, 0, sizeof(*p));
-    p->hw = use_hw;
+    p->hw = (flags & PANEL_HW) ? 1 : 0;
+    p->leds_off = (flags & PANEL_LEDS_OFF) ? 1 : 0;
 
-    if (use_hw) {
+    if (p->hw) {
         /* gpiolib_init() returns the number of GPIOs it found: 0 or less is a
          * failure, not success. gpiolib_mmap() returns 0 on success. */
         if (gpiolib_init() <= 0)
@@ -237,6 +267,9 @@ void panel_stop(panel_t *p)
     pthread_join(p->tid, NULL);
     p->started = 0;
     if (p->hw) {
+        all_led_rows_off();
+        for (k = 0; k < 3; k++)
+            gpio_set_dir(sw_row[k], DIR_INPUT);   /* leave the matrix quiet */
         for (k = 0; k < 16; k++)
             gpio_set_dir(col_pin[k], DIR_INPUT);
     }
