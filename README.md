@@ -36,12 +36,33 @@ panel driver needs — group `gpio` for `/dev/gpiomem`, and `cap_sys_nice` plus 
 setuid bit on the simulator binary — and states that both must be re-applied
 after every recompilation, because a new binary loses them.
 
+## Test program
+
+```
+make                 # builds bin/imp-panel-test
+make privileges      # cap_sys_nice + setuid on the binary (sudo, after every build)
+bin/imp-panel-test   # TUI: reads the switches, drives the lamps
+```
+
+No root needed to run it if you are in group `gpio`.
+
+Keys: `q` quit, `d` demo pattern, `m` manual, `p` lamp walk, `space` pause.
+The first time you move any switch it drops out of the demo pattern by itself:
+from then on the 16-lamp row mirrors the 16 switches and RESET blanks it.
+
+Patterns: the A row runs a synthetic instruction stream (6-bit command field,
+10-bit address scanning 0..1023), IMP1-4 and IMP5-8 are two slow binary
+counters, IMP9-24 show a two-lamp packet crossing the panel with a flash as it
+arrives, and POWER_LED follows the power switch. `--headless N` runs N mux
+frames without the TUI and prints timing plus a coverage check proving that all
+41 lamps are exercised.
+
 ## Status
 
-Documentation and installer first, driver to follow. Everything electrical is
-derived from the KiCad project for the panel; items that still need bench
-confirmation are listed at the end of each document. The installer's build step
-is a placeholder until the simulator source lands, and says so.
+Documentation, installer and a panel test program. The simulator itself is not
+here yet; the test program is the bring-up step before the panel driver moves
+into it. Items that still need bench confirmation are listed at the end of each
+document.
 
 ## Sources
 

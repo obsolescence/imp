@@ -45,9 +45,10 @@ SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 IMP_DIR="${IMP_DIR:-$SELF_DIR}"
 BIN_DIR="$IMP_DIR/bin"
 
-# Panel-enabled simulator binaries. They do not exist yet; the list is here so
-# that the privilege step keeps working unchanged once the build appears.
-BINARIES=(imp)
+# Binaries that get the real-time privilege. 'imp' is the panel-enabled
+# simulator and does not exist yet; the tester does, and it runs the same
+# multiplexing thread, so it needs the same cap_sys_nice.
+BINARIES=(imp imp-panel-test)
 
 SUDO_OK=0
 CLEANED=0
@@ -675,11 +676,16 @@ walk_install() {
     step_hint
 
     # 5 --------------------------------------------------------------- build
-    step_begin 5 $total "Building the simulator"
-    if [ -f "$IMP_DIR/Makefile" ] || [ -f "$IMP_DIR/src/Makefile" ]; then
-        if ui_confirm "Build the simulator now?" y; then
-            if act "make -C '$IMP_DIR'" ""; then
+    step_begin 5 $total "Building"
+    if [ -f "$IMP_DIR/Makefile" ]; then
+        if ui_confirm "Build now (make)?" y; then
+            if act "make -C '$IMP_DIR'"; then
                 step_item "Build finished"
+                if [ "$DRY" = 0 ] && [ -d "$BIN_DIR" ]; then
+                    for b in "$BIN_DIR"/*; do
+                        [ -x "$b" ] && step_note "${DIM}built: $(basename "$b")${RESET}"
+                    done
+                fi
             else
                 fail_exit "build failed — see the output above"
             fi
@@ -687,9 +693,8 @@ walk_install() {
             step_item "Build skipped by request"
         fi
     else
-        step_note "${YELLOW}No simulator source in this repository yet — the build step is a placeholder.${RESET}"
-        step_note "${DIM}When the source lands, this step builds it and the next step marks the binary.${RESET}"
-        step_item "Build: pending (source not present)"
+        step_note "${YELLOW}No Makefile in $IMP_DIR — nothing to build.${RESET}"
+        step_item "Build: nothing to do"
     fi
     step_hint
 
@@ -707,9 +712,9 @@ walk_install() {
         "              $PKGS_SIM" \
         "" \
         "Real-time privileges: $([ "$marked" = 0 ] && echo 'no binary yet — applied after the first build' || echo "set on $marked binary/binaries in $BIN_DIR")" \
-        "Re-apply after EVERY rebuild:   ./install.sh --privileges" \
+        "Re-apply after EVERY rebuild:   ./install.sh --privileges   (or make privileges)" \
         "" \
-        "${DIM}Nothing was built — the simulator source is not in the repository yet.${RESET}"
+        "${DIM}The panel test program builds today. The simulator itself is not in the repository yet.${RESET}"
 }
 
 # --- mode: privileges only ---------------------------------------------------

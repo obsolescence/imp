@@ -302,12 +302,24 @@ noticeably brighter at the same or lower thread load.
 
 ### 5.5 Thread and privileges
 
-Same approach as PiDP-10: a pthread pinned to SCHED_FIFO for the multiplexing
-loop, and direct register access to the GPIO controller through a small mmap
-library rather than libgpiod or sysfs. That needs both an elevated privilege
-(for the GPIO mapping) and the ability to raise real-time priority; the PiDP-10
-solution is a setuid binary plus `setcap cap_sys_nice+ep`, which is the model to
-copy.
+Same approach as PiDP-10: a pthread on SCHED_FIFO for the multiplexing loop.
+
+Hardware access goes through the `pinctrl` library of Raspberry Pi's `utils`
+package, vendored in `src/pinctrl/` (BSD-3, taken from the PiDP-10 tree). It
+finds the GPIO controller from the device tree and hides the per-SoC
+differences, which matter here for one specific reason: the panel's 16 column
+lines have no pull-up resistors of their own, so the read path depends on the
+SoC's internal pull-ups — and the register that selects them is not the same on
+BCM2835/2711/2712. A hand-written mmap backend for one Pi is silently wrong on
+the others; this one covers Pi 2 through Pi 5.
+
+Access is through `/dev/gpiomemN`, which on Raspberry Pi OS is `root:gpio 0660`,
+so membership of group `gpio` is all that is needed. Only the `/dev/mem`
+fallback path needs root. Raising the thread to SCHED_FIFO is a separate
+privilege: `cap_sys_nice` on the binary, which is what `install.sh` and
+`make privileges` set. The setuid bit PiDP-10 also sets is harmless and kept for
+consistency, but on current Raspberry Pi OS the group membership is what
+actually gets the panel talking.
 
 ## 6. Pins reserved by other functions — read this before enabling anything
 
