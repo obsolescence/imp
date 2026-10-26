@@ -213,6 +213,51 @@ void panel_static_off(void)
         gpio_set_dir(col_pin[k], DIR_INPUT);
 }
 
+/* --- probe mode: one switch row held LOW, all LED rows low ------------------
+ *
+ * The multiplexed scan pulls a row low for 20 us, far too short for a meter.
+ * This holds row `row` low indefinitely (the other two high, as rule 2
+ * requires) with the columns pulled up, so a closed switch in that row shows a
+ * steady 0 V at its column and can be found with a probe. panel_probe_read()
+ * returns the column word while that is happening.
+ */
+int panel_probe_on(int row)
+{
+    unsigned r, k;
+
+    if (row < 0 || row > 2)
+        return -1;
+    if (gpiolib_init() <= 0)
+        return -1;
+    if (gpiolib_mmap() != 0)
+        return -1;
+
+    all_led_rows_off();
+    for (k = 0; k < 16; k++) {
+        gpio_set_dir(col_pin[k], DIR_INPUT);
+        gpio_set_pull(col_pin[k], PULL_UP);
+    }
+    for (r = 0; r < 3; r++) {
+        gpio_set_dir(sw_row[r], DIR_OUTPUT);
+        if (r == (unsigned)row)
+            gpio_clear(sw_row[r]);
+        else
+            gpio_set(sw_row[r]);
+    }
+    return 0;
+}
+
+uint16_t panel_probe_read(void)
+{
+    uint16_t w = 0;
+    unsigned k;
+
+    for (k = 0; k < 16; k++)
+        if (gpio_get_level(col_pin[k]) == 0)
+            w |= (uint16_t)(1u << k);
+    return w;
+}
+
 int panel_start(panel_t *p, unsigned flags)
 {
     pthread_attr_t attr;

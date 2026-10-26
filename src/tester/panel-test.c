@@ -362,11 +362,42 @@ static int switches_mode(void)
     return 0;
 }
 
+/* ---- probe mode: one switch row held low, steady enough for a meter ------- */
+static int probe_mode(int row)
+{
+    uint16_t prev = 0xFFFF;
+    int i;
+
+    if (panel_probe_on(row) != 0) {
+        fprintf(stderr, "panel_probe_on failed: %s\n", strerror(errno));
+        return 1;
+    }
+    printf("probe: switch row %d held LOW, the other two rows HIGH, LED rows LOW,\n", row);
+    printf("columns input with pull-up. A closed switch in this row is a steady 0 V\n");
+    printf("at its column, so it can be found with a probe.\n\n");
+    printf("column word, col15 (leftmost) .. col0 (rightmost), 1 = closed:\n\n");
+    while (!quit_flag) {
+        uint16_t w = panel_probe_read();
+
+        if (w != prev) {
+            printf("row %d  %04X  ", row, w);
+            for (i = 15; i >= 0; i--)
+                putchar(((w >> i) & 1u) ? '1' : '0');
+            printf("\n");
+            fflush(stdout);
+            prev = w;
+        }
+        usleep(100000);
+    }
+    panel_static_off();
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     panel_t p;
     int use_hw = 1, walk = 0, mode = 0, paused = 0, solid = 0, static_mode = 0;
-    int switches = 0, static_row = 0;
+    int switches = 0, static_row = 0, probe_row = -1;
     long headless = -1;
     uint32_t t0, t1, prev[3] = { 0, 0, 0 };
     int i, have_prev = 0;
@@ -386,6 +417,8 @@ int main(int argc, char **argv)
                 static_row = argv[++i][0] - '0';
         } else if (!strcmp(argv[i], "--switches")) {
             switches = 1;
+        } else if (!strcmp(argv[i], "--probe") && i + 1 < argc) {
+            probe_row = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--headless") && i + 1 < argc) {
             headless = strtol(argv[++i], NULL, 10);
         } else if (!strcmp(argv[i], "--help")) {
@@ -395,6 +428,7 @@ int main(int argc, char **argv)
                    "  --solid      light every lamp continuously (meter/bring-up check)\n"
                    "  --static [R] no multiplexing: hold LED row R high so its 16 lamps stay on\n"
                    "  --switches   read the switches only, drive no LEDs at all\n"
+                   "  --probe R    hold switch row R low steadily, print its column word (meter check)\n"
                    "  --headless N run N mux frames with the demo pattern, print timing, exit\n",
                    argv[0]);
             return 0;
@@ -406,6 +440,9 @@ int main(int argc, char **argv)
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+
+    if (probe_row >= 0)
+        return probe_mode(probe_row);
 
     if (switches)
         return switches_mode();

@@ -63,4 +63,11 @@ void panel_stop(panel_t *p);
 int  panel_static_on(int row);
 void panel_static_off(void);
 
+/* Steady switch probe: hold switch row `row` LOW (others HIGH), LED rows low,
+ * columns input pull-up, so a closed switch in that row is a steady 0 V that a
+ * meter can see. panel_probe_read() returns the column word (bit k = column k,
+ * 1 = closed). */
+int      panel_probe_on(int row);
+uint16_t panel_probe_read(void);
+
 #endif
