@@ -18,6 +18,10 @@ shared columns, with a real-time multiplexing thread inside the simulator.
 
 ## Installer
 
+This repository lives in `/opt/imp`, like the other Obsolescence projects. The
+installer derives every path from its own location, so a checkout elsewhere works
+too, but `/opt/imp` is the convention and everything below assumes it.
+
 ```
 ./install.sh                 interactive menu
 ./install.sh --install       dependency check + install, then the privileges
