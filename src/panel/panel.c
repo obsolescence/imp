@@ -209,6 +209,8 @@ void panel_static_off(void)
     unsigned k;
 
     all_led_rows_off();
+    for (k = 0; k < 3; k++)
+        gpio_set_dir(sw_row[k], DIR_INPUT);   /* do not leave a row driven low */
     for (k = 0; k < 16; k++)
         gpio_set_dir(col_pin[k], DIR_INPUT);
 }
