@@ -16,11 +16,28 @@ shared columns, with a real-time multiplexing thread inside the simulator.
 - `doc/operation.md` — what every lamp and switch means, its function on the
   original machine, and how the panel is operated.
 
+## Installer
+
+```
+./install.sh                 interactive menu
+./install.sh --install       dependency check + install, then the privileges
+./install.sh --privileges    re-apply setuid + cap_sys_nice (after every rebuild)
+./install.sh --check         report the state of the machine, change nothing
+DRY_RUN=1 ./install.sh       simulate the whole flow, change NOTHING
+```
+
+Same style as the agent-pdp1 installer: two-zone VT-100 screen, streaming log,
+plain mode when there is no terminal, safe to re-run. It sets the two things the
+panel driver needs — group `gpio` for `/dev/gpiomem`, and `cap_sys_nice` plus the
+setuid bit on the simulator binary — and states that both must be re-applied
+after every recompilation, because a new binary loses them.
+
 ## Status
 
-Documentation first, driver to follow. Everything electrical is derived from the
-KiCad project for the panel; items that still need bench confirmation are listed
-at the end of each document.
+Documentation and installer first, driver to follow. Everything electrical is
+derived from the KiCad project for the panel; items that still need bench
+confirmation are listed at the end of each document. The installer's build step
+is a placeholder until the simulator source lands, and says so.
 
 ## Sources
 
