@@ -41,4 +41,9 @@ typedef struct {
 int  panel_start(panel_t *p, int use_hw);
 void panel_stop(panel_t *p);
 
+/* Bring-up diagnostics: light every lamp continuously (no multiplexing), which
+ * is the state to measure with a meter. panel_static_off() releases the pins. */
+int  panel_static_on(void);
+void panel_static_off(void);
+
 #endif

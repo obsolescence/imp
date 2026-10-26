@@ -145,6 +145,45 @@ static void *mux_thread(void *arg)
     return NULL;
 }
 
+/* --- static bring-up mode -------------------------------------------------
+ *
+ * No multiplexing: all three rows driven HIGH and all 16 columns driven LOW, so
+ * every lamp is on continuously. This is the state to put a meter on, and the
+ * quickest way to ask "can this panel light at all?". About 150 mA from 5 V,
+ * well inside the UDN2981A ratings (three channels, ~50 mA each).
+ */
+int panel_static_on(void)
+{
+    unsigned r, k;
+
+    if (gpiolib_init() <= 0)
+        return -1;
+    if (gpiolib_mmap() != 0)
+        return -1;
+
+    for (r = 0; r < 3; r++)
+        gpio_set_dir(sw_row[r], DIR_INPUT);
+    for (k = 0; k < 16; k++) {
+        gpio_set_dir(col_pin[k], DIR_OUTPUT);
+        gpio_clear(col_pin[k]);
+    }
+    for (r = 0; r < 3; r++) {
+        gpio_set_dir(led_row[r], DIR_OUTPUT);
+        gpio_set(led_row[r]);
+    }
+    return 0;
+}
+
+void panel_static_off(void)
+{
+    unsigned r, k;
+
+    for (r = 0; r < 3; r++)
+        gpio_clear(led_row[r]);
+    for (k = 0; k < 16; k++)
+        gpio_set_dir(col_pin[k], DIR_INPUT);
+}
+
 int panel_start(panel_t *p, int use_hw)
 {
     pthread_attr_t attr;

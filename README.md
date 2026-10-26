@@ -46,6 +46,11 @@ bin/imp-panel-test   # TUI: reads the switches, drives the lamps
 
 No root needed to run it if you are in group `gpio`.
 
+Bring-up aids: `--static` holds every lamp on with no multiplexing at all — that
+is the state to put a meter on; `--solid` lights everything through the normal
+mux; `--headless N` runs N frames with the demo pattern and prints timing plus a
+coverage check.
+
 Keys: `q` quit, `d` demo pattern, `m` manual, `p` lamp walk, `space` pause.
 The first time you move any switch it drops out of the demo pattern by itself:
 from then on the 16-lamp row mirrors the 16 switches and RESET blanks it.

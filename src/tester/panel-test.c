@@ -312,7 +312,7 @@ static void coverage(void)
 int main(int argc, char **argv)
 {
     panel_t p;
-    int use_hw = 1, walk = 0, mode = 0, paused = 0;
+    int use_hw = 1, walk = 0, mode = 0, paused = 0, solid = 0, static_mode = 0;
     long headless = -1;
     uint32_t t0, t1, prev[3] = { 0, 0, 0 };
     int i, have_prev = 0;
@@ -323,18 +323,43 @@ int main(int argc, char **argv)
             use_hw = 0;
         } else if (!strcmp(argv[i], "--ascii")) {
             G_ON = "#"; G_OFF = "."; G_UP = "^"; G_DN = "v";
+        } else if (!strcmp(argv[i], "--solid")) {
+            solid = 1;
+        } else if (!strcmp(argv[i], "--static")) {
+            static_mode = 1;
         } else if (!strcmp(argv[i], "--headless") && i + 1 < argc) {
             headless = strtol(argv[++i], NULL, 10);
         } else if (!strcmp(argv[i], "--help")) {
-            printf("usage: %s [--no-gpio] [--ascii] [--headless N]\n\n"
+            printf("usage: %s [--no-gpio] [--ascii] [--solid] [--headless N]\n\n"
                    "  --no-gpio    run the mux thread without touching GPIO\n"
                    "  --ascii      ASCII glyphs instead of UTF-8 lamps\n"
-                   "  --headless N run N mux frames, print timing, exit\n", argv[0]);
+                   "  --solid      light every lamp continuously (meter/bring-up check)\n"
+                   "  --static     no multiplexing at all: hold all lamps on (measure this)\n"
+                   "  --headless N run N mux frames with the demo pattern, print timing, exit\n",
+                   argv[0]);
             return 0;
         } else {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
             return 2;
         }
+    }
+
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+
+    if (static_mode) {
+        if (panel_static_on() != 0) {
+            fprintf(stderr, "panel_static_on failed: %s\n", strerror(errno));
+            return 1;
+        }
+        printf("static: all three rows HIGH, all 16 columns LOW — every lamp "
+               "should be on steadily.\n");
+        printf("measure now. Ctrl-C to release.\n");
+        while (!quit_flag)
+            sleep(1);
+        panel_static_off();
+        printf("released.\n");
+        return 0;
     }
 
     if (headless >= 0) {
@@ -344,14 +369,28 @@ int main(int argc, char **argv)
             return 1;
         }
         t0 = now_ms();
-        while (p.frames < (uint32_t)headless)
-            usleep(1000);
+        while (p.frames < (uint32_t)headless && !quit_flag) {
+            uint32_t ms = now_ms() - t0;
+            uint16_t l[3];
+
+            if (solid) {
+                l[0] = l[1] = l[2] = 0xFFFF;
+            } else {
+                pattern(ms, 1, 0, l);   /* power lamp forced on */
+            }
+            p.lamps[0] = l[0];
+            p.lamps[1] = l[1];
+            p.lamps[2] = l[2];
+            usleep(5000);
+        }
         t1 = now_ms();
+        printf("last lamp words:   %06o %06o %06o\n",
+               (unsigned)p.lamps[0], (unsigned)p.lamps[1], (unsigned)p.lamps[2]);
         panel_stop(&p);
         printf("\nmux: %u frames in %u ms = %.1f frames/s (%.2f ms/frame), rt=%s, hw=%s\n",
-               (unsigned)headless, (unsigned)(t1 - t0),
-               (t1 > t0) ? (float)headless * 1000.0f / (float)(t1 - t0) : 0.0f,
-               (t1 > t0) ? (float)(t1 - t0) / (float)headless : 0.0f,
+               (unsigned)p.frames, (unsigned)(t1 - t0),
+               (t1 > t0) ? (float)p.frames * 1000.0f / (float)(t1 - t0) : 0.0f,
+               (t1 > t0) ? (float)(t1 - t0) / (float)p.frames : 0.0f,
                p.rt_ok ? "yes" : "no", use_hw ? "yes" : "no");
         printf("last switch words: %04X %04X %04X  (all zeros = no switch closed, "
                "or no panel attached)\n",
@@ -384,7 +423,11 @@ int main(int argc, char **argv)
             uint16_t l[3];
             int power_on = (int)((s1 >> SW1_POWER) & 1u);
 
-            pattern(ms, power_on, walk, l);
+            if (solid) {
+                l[0] = l[1] = l[2] = 0xFFFF;
+            } else {
+                pattern(ms, power_on, walk, l);
+            }
             if (!walk && mode)
                 l[0] = ((p.sw[2] >> SW2_RESET) & 1u) ? 0 : p.sw[0];
             p.lamps[0] = l[0];
